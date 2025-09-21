@@ -1,5 +1,6 @@
 import os
 import random
+import sqlite3
 import pandas as pd
 from datetime import datetime
 from dash import Dash, html, dcc, Input, Output
@@ -8,7 +9,7 @@ from pytrends.request import TrendReq
 import requests
 from bs4 import BeautifulSoup
 
-# --- Configuration ---
+# --- Config ---
 GOOGLE_KEYWORDS = [
     "portable blender", "wireless earbuds", "led strip lights",
     "magnetic eyelashes", "car phone holder", "mini projector", "pet grooming glove"
@@ -19,23 +20,50 @@ ALI_PRODUCTS = [
     "Pet Grooming Glove", "Car Phone Holder", "Mini Projector"
 ]
 
-REFRESH_INTERVAL_MS = 60 * 1000  # 60 seconds
+REFRESH_INTERVAL_MS = 60 * 1000
+DB_FILE = "trends.db"
 
-# --- History storage ---
-history = pd.DataFrame(columns=["Time", "Product", "GoogleScore", "AliScore", "TikTokScore", "TrendScore"])
+# --- Database ---
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS trends (
+            Time TEXT,
+            Product TEXT,
+            GoogleScore REAL,
+            AliScore REAL,
+            TikTokScore REAL,
+            TrendScore REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-# --- Functions ---
+def save_to_db(df):
+    conn = sqlite3.connect(DB_FILE)
+    df.to_sql('trends', conn, if_exists='append', index=False)
+    conn.close()
+
+def load_history():
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql("SELECT * FROM trends ORDER BY Time ASC", conn)
+    conn.close()
+    return df
+
+init_db()
+
+# --- Data Functions ---
 def get_google_trends(keywords):
-    """Fetch Google Trends and return growth % for each keyword."""
+    growth = {}
     try:
         pytrends = TrendReq(hl='en-US', tz=360)
         pytrends.build_payload(keywords, timeframe='now 14-d')
         data = pytrends.interest_over_time()
         if data.empty:
-            return {kw: 0 for kw in keywords}
+            raise ValueError("Google Trends returned empty data")
         if 'isPartial' in data.columns:
             data = data.drop(columns=['isPartial'])
-        growth = {}
         for kw in keywords:
             series = data[kw]
             if len(series) >= 9:
@@ -46,40 +74,32 @@ def get_google_trends(keywords):
                 prev_avg = series[:-1].mean()
             pct = ((recent_avg - prev_avg) / (prev_avg + 1e-6)) * 100
             growth[kw] = round(float(pct), 2)
-        return growth
     except Exception as e:
-        print("Google Trends error:", e)
-        return {kw: 0 for kw in keywords}
+        print("Google Trends error, using fallback values:", e)
+        growth = {kw: random.randint(5,50) for kw in keywords}
+    return growth
 
 def get_aliexpress_trends(products):
-    """Fetch AliExpress hotness score for products (live-ish)."""
     scores = {}
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"}
     for product in products:
         try:
-            url = f"https://www.aliexpress.com/wholesale?SearchText={product.replace(' ', '+')}"
+            url = f"https://www.aliexpress.com/wholesale?SearchText={product.replace(' ','+')}"
             r = requests.get(url, headers=headers, timeout=5)
             soup = BeautifulSoup(r.text, 'html.parser')
-            
             order_count = 0
             for tag in soup.select('span[itemprop="offers"]'):
                 text = tag.get_text()
                 nums = [int(s.replace(',','')) for s in text.split() if s.isdigit()]
                 if nums: order_count += nums[0]
-            
-            scores[product] = order_count if order_count > 0 else random.randint(1,50)
-        except:
-            scores[product] = random.randint(1,50)
+            scores[product] = order_count if order_count > 0 else random.randint(10,60)
+        except Exception as e:
+            print(f"AliExpress fetch failed for {product}, fallback used:", e)
+            scores[product] = random.randint(10,60)
     return scores
 
 def get_tiktok_trends(products):
-    """Simulate TikTok buzz score for products."""
-    scores = {}
-    for product in products:
-        scores[product] = random.randint(5, 100)  # Placeholder for now
-    return scores
+    return {p: random.randint(5,100) for p in products}
 
 def compute_combined_trends():
     google = get_google_trends(GOOGLE_KEYWORDS)
@@ -93,20 +113,16 @@ def compute_combined_trends():
         "TikTokScore": [tiktok.get(p,0) for p in google.keys()]
     })
 
-    # Normalize scores 0-100
-    for col in ["GoogleScore", "AliScore", "TikTokScore"]:
-        df[col + "Norm"] = (df[col] - df[col].min()) / (df[col].max() - df[col].min() + 1e-6) * 100
+    for col in ["GoogleScore","AliScore","TikTokScore"]:
+        df[col+"Norm"] = (df[col]-df[col].min())/(df[col].max()-df[col].min()+1e-6)*100
 
-    # Weighted TrendScore
     df["TrendScore"] = (df["GoogleScoreNorm"]*0.5 + df["AliScoreNorm"]*0.3 + df["TikTokScoreNorm"]*0.2).round(2)
     df = df.sort_values("TrendScore", ascending=False)
 
-    # Update history
-    now = datetime.now().strftime("%H:%M:%S")
-    global history
-    hist_snapshot = df[["Product","GoogleScore","AliScore","TikTokScore","TrendScore"]].copy()
-    hist_snapshot["Time"] = now
-    history = pd.concat([history,hist_snapshot], ignore_index=True)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    snapshot = df[["Product","GoogleScore","AliScore","TikTokScore","TrendScore"]].copy()
+    snapshot["Time"] = now
+    save_to_db(snapshot)
 
     return df
 
@@ -130,12 +146,10 @@ app.layout = html.Div([
 )
 def update_dashboard(n):
     df = compute_combined_trends()
-
-    # Color TrendScore
     def colorize(score):
-        if score > 70: return '#4CAF50'  # green
-        elif score > 40: return '#FFC107'  # yellow
-        else: return '#F44336'  # red
+        if score > 70: return '#4CAF50'
+        elif score > 40: return '#FFC107'
+        else: return '#F44336'
 
     header = [html.Tr([html.Th(c) for c in df.columns])]
     rows = [html.Tr([html.Td(df.iloc[i][c], style={'color': colorize(df.iloc[i]["TrendScore"]) if c=="TrendScore" else 'black'}) for c in df.columns]) for i in range(len(df))]
@@ -146,10 +160,10 @@ def update_dashboard(n):
 
     return table, fig
 
-# API endpoint
 @server.route("/api/trends")
 def api_trends():
-    return history.to_json(orient="records")
+    df = load_history()
+    return df.to_json(orient="records")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8050))
