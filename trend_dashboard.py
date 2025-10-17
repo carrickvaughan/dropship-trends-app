@@ -114,7 +114,8 @@ app.layout = html.Div([
         html.Button("Export Swipes", id="export-swipes")
     ], style={'textAlign':'center','margin':'10px'}),
 
-    html.Div(id="table-container", style={'marginTop':'20px'}),
+    # Make table horizontally scrollable on mobile
+    html.Div(id="table-container", style={'overflowX': 'auto', 'width': '100%', 'paddingBottom':'10px'}),
     
     html.Div([
         dcc.Graph(id="profit-bar-chart"),
@@ -188,18 +189,23 @@ def update_dashboard(n, markup, ship, export_clicks):
         thumbs = []
         for c in creatives[:6]:
             thumbs.append(html.Div([
-                html.A(html.Img(src=c['image'], className='thumb'), href=c['source'], target="_blank"),
+                html.A(html.Img(src=c['image'], style={"width":"120px","maxWidth":"100%","borderRadius":"4px"}), href=c['source'], target="_blank"),
                 html.Br(),
                 html.A("Save", href="#", target="_blank", style={'fontSize':'12px','color':'#9ad0ff'})
-            ], style={'display':'inline-block','textAlign':'center','width':'120px'}))
+            ], style={'textAlign':'center'}))
 
-        thumb_row = html.Div(thumbs, className='thumbnail-row')
+        thumb_row = html.Div(
+            thumbs,
+            className='thumbnail-row',
+            style={"display":"flex","overflowX":"auto","gap":"8px","paddingBottom":"4px"}
+        )
+
         product_cell = html.Td([
             html.A(r.Product, href=r.AliURL, target="_blank", style={'fontWeight':'700','color':'#00ffcc'}),
-            html.Div(r.ImageURL and html.Img(src=r.ImageURL, style={'width':'80px','borderRadius':'6px','marginTop':'6px'}) or "")
+            html.Div(r.ImageURL and html.Img(src=r.ImageURL, style={'width':'80px','maxWidth':'100%','borderRadius':'6px','marginTop':'6px'}) or "")
         ])
         rows.append(html.Tr([
-            html.Td(html.Img(src=(r.ImageURL or f"https://via.placeholder.com/80x48.png?text={quote_plus(r.Product)}"), style={'width':'80px','borderRadius':'6px'})),
+            html.Td(html.Img(src=(r.ImageURL or f"https://via.placeholder.com/80x48.png?text={quote_plus(r.Product)}"), style={'width':'80px','maxWidth':'100%','borderRadius':'6px'})),
             product_cell,
             html.Td(f"${r.Price:.2f}"),
             html.Td(f"{r.ProfitMargin:.1f}%"),
