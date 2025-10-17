@@ -7,7 +7,8 @@ import plotly.express as px
 import pandas as pd
 import sqlite3
 from urllib.parse import quote_plus
-from datetime import datetime
+from datetime import datetime, timedelta
+import random
 
 # ------------------------
 # Constants
@@ -16,40 +17,83 @@ DB_FILE = "trends.db"
 ALI_PRODUCTS = ["Product A","Product B","Product C"]  # replace with your products
 
 # ------------------------
+# Initialize database
+# ------------------------
+conn = sqlite3.connect(DB_FILE)
+conn.execute("""
+CREATE TABLE IF NOT EXISTS trends (
+    Time TEXT,
+    Product TEXT,
+    TrendScore REAL,
+    ProfitPotential REAL
+)
+""")
+conn.close()
+
+# ------------------------
+# Seed sample data if empty
+# ------------------------
+def seed_sample_trends():
+    conn = sqlite3.connect(DB_FILE)
+    times = [datetime.now() - timedelta(hours=i) for i in range(5, 0, -1)]
+    rows = []
+    for t in times:
+        for p in ALI_PRODUCTS:
+            rows.append({
+                "Time": t.strftime("%Y-%m-%d %H:%M:%S"),
+                "Product": p,
+                "TrendScore": random.randint(20, 80),
+                "ProfitPotential": random.randint(20, 80)
+            })
+    df_seed = pd.DataFrame(rows)
+    df_seed.to_sql("trends", conn, if_exists="append", index=False)
+    conn.close()
+
+# Run seeding if empty
+conn = sqlite3.connect(DB_FILE)
+cur = conn.cursor()
+cur.execute("SELECT COUNT(*) FROM trends")
+if cur.fetchone()[0] == 0:
+    print("Seeding database with sample trends...")
+    seed_sample_trends()
+conn.close()
+
+# ------------------------
 # Helper functions
 # ------------------------
 def compute_combined_trends(markup_multiplier=2.5, shipping_cost=3.0):
-    """
-    Return a DataFrame with Product, GoogleScore, AliScore, TikTokScore,
-    Price, ProfitMargin, TrendScore, ProfitPotential, ImageURL, AliURL
-    Placeholder example; replace with your real computation.
-    """
     data = []
     for p in ALI_PRODUCTS:
+        price = random.randint(10,50)
+        profit_margin = random.randint(20,70)
+        trend_score = random.randint(10,80)
+        profit_potential = round(profit_margin * price / 100,2)
         data.append({
             "Product": p,
-            "GoogleScore": 10,
-            "AliScore": 10,
-            "TikTokScore": 10,
-            "Price": 20,
-            "ProfitMargin": 50,
-            "TrendScore": 30,
-            "ProfitPotential": 30,
+            "GoogleScore": random.randint(10,50),
+            "AliScore": random.randint(10,50),
+            "TikTokScore": random.randint(10,50),
+            "Price": price,
+            "ProfitMargin": profit_margin,
+            "TrendScore": trend_score,
+            "ProfitPotential": profit_potential,
             "ImageURL": None,
             "AliURL": f"https://www.aliexpress.com/wholesale?SearchText={quote_plus(p)}"
         })
     return pd.DataFrame(data)
 
 def get_ad_creatives(product_name):
-    """
-    Return list of ad creatives for a product.
-    Each creative is a dict with 'image', 'source', 'caption'.
-    This is a placeholder; replace with real fetch.
-    """
     return [{"image":"https://via.placeholder.com/120x80.png?text=Ad", "source":"https://example.com", "caption":"Sample Ad"}]
 
+def save_trends_to_db(df):
+    conn = sqlite3.connect(DB_FILE)
+    df_to_save = df[["Product", "TrendScore", "ProfitPotential"]].copy()
+    df_to_save["Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    df_to_save.to_sql("trends", conn, if_exists="append", index=False)
+    conn.close()
+
 # ------------------------
-# Initialize app
+# Initialize Dash
 # ------------------------
 app = dash.Dash(__name__)
 app.title = "Dropship Trend Dashboard"
@@ -100,25 +144,15 @@ def update_dashboard(n, markup, ship, export_clicks):
     except: ship = 3.0
 
     # --- Compute trends safely ---
-    try:
-        df = compute_combined_trends(markup_multiplier=markup, shipping_cost=ship)
-        if df.empty: raise ValueError("compute_combined_trends returned empty")
-    except Exception as e:
-        print("Trend computation failed, using fallback:", e)
-        df = pd.DataFrame({
-            "Product": ALI_PRODUCTS,
-            "GoogleScore": [10]*len(ALI_PRODUCTS),
-            "AliScore": [10]*len(ALI_PRODUCTS),
-            "TikTokScore": [10]*len(ALI_PRODUCTS),
-            "Price": [20]*len(ALI_PRODUCTS),
-            "ProfitMargin": [50]*len(ALI_PRODUCTS),
-            "TrendScore": [30]*len(ALI_PRODUCTS),
-            "ProfitPotential": [30]*len(ALI_PRODUCTS),
-            "ImageURL": [None]*len(ALI_PRODUCTS),
-            "AliURL": [f"https://www.aliexpress.com/wholesale?SearchText={quote_plus(p)}" for p in ALI_PRODUCTS]
-        })
+    df = compute_combined_trends(markup_multiplier=markup, shipping_cost=ship)
 
-    # --- Load history safely ---
+    # --- Save to DB ---
+    try:
+        save_trends_to_db(df)
+    except Exception as e:
+        print("Failed to save trends:", e)
+
+    # --- Load historical data ---
     try:
         hist = pd.read_sql("SELECT * FROM trends ORDER BY Time ASC", sqlite3.connect(DB_FILE))
     except:
@@ -148,8 +182,7 @@ def update_dashboard(n, markup, ship, export_clicks):
     for r in df.itertuples():
         try:
             creatives = get_ad_creatives(r.Product)
-        except Exception as e:
-            print("Creative fetch failed:", e)
+        except:
             creatives = []
 
         thumbs = []
@@ -162,7 +195,7 @@ def update_dashboard(n, markup, ship, export_clicks):
 
         thumb_row = html.Div(thumbs, className='thumbnail-row')
         product_cell = html.Td([
-            html.A(r.Product, href=r.AliURL if hasattr(r,'AliURL') else f"https://www.aliexpress.com/wholesale?SearchText={quote_plus(r.Product)}", target="_blank", style={'fontWeight':'700','color':'#00ffcc'}),
+            html.A(r.Product, href=r.AliURL, target="_blank", style={'fontWeight':'700','color':'#00ffcc'}),
             html.Div(r.ImageURL and html.Img(src=r.ImageURL, style={'width':'80px','borderRadius':'6px','marginTop':'6px'}) or "")
         ])
         rows.append(html.Tr([
@@ -178,21 +211,21 @@ def update_dashboard(n, markup, ship, export_clicks):
 
     # --- Profit potential bar chart ---
     try:
-        bar_fig = px.bar(df, x="Product", y="ProfitPotential", color="ProfitPotential", title="💹 Profit Potential", color_continuous_scale="Mint")
+        bar_fig = px.bar(df, x="Product", y="ProfitPotential", color="ProfitPotential",
+                         title="💹 Profit Potential", color_continuous_scale=px.colors.sequential.Mint)
         bar_fig.update_layout(template="plotly_dark", height=420, margin=dict(t=50,l=25,r=25,b=120))
-    except Exception as e:
-        print("Bar chart failed:", e)
+    except:
         bar_fig = px.bar(title="💹 Profit Potential")
 
     # --- Trend line chart ---
     try:
         if not hist.empty:
-            line_fig = px.line(hist, x="Time", y="TrendScore", color="Product", title="📈 Trend Score Over Time")
+            line_fig = px.line(hist, x="Time", y="TrendScore", color="Product", title="📈 Trend Score Over Time",
+                               markers=True)
             line_fig.update_layout(template="plotly_dark", height=420)
         else:
             line_fig = px.line(title="📈 Trend Score Over Time")
-    except Exception as e:
-        print("Line chart failed:", e)
+    except:
         line_fig = px.line(title="📈 Trend Score Over Time")
 
     return table, bar_fig, line_fig, top_badge
