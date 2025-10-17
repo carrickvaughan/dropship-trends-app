@@ -108,13 +108,13 @@ app.layout = html.Div([
     
     html.Div([
         html.Label("Markup Multiplier:"),
-        dcc.Input(id="input-markup", type="number", value=2.5, step=0.1),
+        dcc.Input(id="input-markup", type="number", value=2.5, step=0.1, style={"maxWidth":"80px"}),
         html.Label("Shipping Cost:"),
-        dcc.Input(id="input-ship", type="number", value=3.0, step=0.5),
+        dcc.Input(id="input-ship", type="number", value=3.0, step=0.5, style={"maxWidth":"80px"}),
         html.Button("Export Swipes", id="export-swipes")
-    ], style={'textAlign':'center','margin':'10px'}),
+    ], style={'textAlign':'center','margin':'10px','overflowX':'hidden'}),
 
-    # Make table horizontally scrollable on mobile
+    # Table wrapper (scrollable horizontally)
     html.Div(id="table-container", style={'overflowX': 'auto', 'width': '100%', 'paddingBottom':'10px'}),
     
     html.Div([
@@ -123,7 +123,7 @@ app.layout = html.Div([
     ], style={'display':'flex','flexDirection':'column', 'gap':'20px'}),
 
     dcc.Interval(id="interval", interval=5*60*1000)  # refresh every 5 min
-], style={'backgroundColor':'#111','color':'#fff','fontFamily':'sans-serif','padding':'10px'})
+], style={'backgroundColor':'#111','color':'#fff','fontFamily':'sans-serif','padding':'10px','overflowX':'hidden','maxWidth':'100vw'})
 
 # ------------------------
 # Callback
@@ -196,8 +196,7 @@ def update_dashboard(n, markup, ship, export_clicks):
 
         thumb_row = html.Div(
             thumbs,
-            className='thumbnail-row',
-            style={"display":"flex","overflowX":"auto","gap":"8px","paddingBottom":"4px"}
+            style={"display":"flex","overflowX":"auto","gap":"8px","paddingBottom":"4px","flexWrap":"nowrap"}
         )
 
         product_cell = html.Td([
@@ -213,7 +212,7 @@ def update_dashboard(n, markup, ship, export_clicks):
             html.Td(f"{r.ProfitPotential:.1f}"),
             html.Td(thumb_row)
         ]))
-    table = html.Table([header] + rows, style={'width':'100%','borderSpacing':'10px'})
+    table = html.Table([header] + rows, style={'width':'100%','borderSpacing':'10px','tableLayout':'auto','minWidth':'700px'})
 
     # --- Profit potential bar chart ---
     try:
@@ -226,18 +225,4 @@ def update_dashboard(n, markup, ship, export_clicks):
     # --- Trend line chart ---
     try:
         if not hist.empty:
-            line_fig = px.line(hist, x="Time", y="TrendScore", color="Product", title="📈 Trend Score Over Time",
-                               markers=True)
-            line_fig.update_layout(template="plotly_dark", height=420)
-        else:
-            line_fig = px.line(title="📈 Trend Score Over Time")
-    except:
-        line_fig = px.line(title="📈 Trend Score Over Time")
-
-    return table, bar_fig, line_fig, top_badge
-
-# ------------------------
-# Run server
-# ------------------------
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8050, debug=True)
+            line_fig = px.line(hist, x="Time", y="Trend
