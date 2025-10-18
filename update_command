@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: dropship-trends-app
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python trend_dashboard.py
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+cronJobs:
+  - name: update-trend-cache
+    schedule: "0 */3 * * *"  # every 3 hours
+    command: "pip install -r requirements.txt && python update_trends.py"
+    env: python
