@@ -1,228 +1,106 @@
-# trend_dashboard.py
-
 import dash
-from dash import html, dcc
-from dash.dependencies import Input, Output
-import plotly.express as px
+from dash import dcc, html, dash_table, Input, Output
 import pandas as pd
-import sqlite3
-from urllib.parse import quote_plus
-from datetime import datetime, timedelta
+import plotly.express as px
+from pytrends.request import TrendReq
+import datetime
 import random
 
-# ------------------------
-# Constants
-# ------------------------
-DB_FILE = "trends.db"
-ALI_PRODUCTS = ["Product A","Product B","Product C"]  # replace with your products
+# Initialize Google Trends API
+pytrends = TrendReq(hl='en-US', tz=360)
 
-# ------------------------
-# Initialize database
-# ------------------------
-conn = sqlite3.connect(DB_FILE)
-conn.execute("""
-CREATE TABLE IF NOT EXISTS trends (
-    Time TEXT,
-    Product TEXT,
-    TrendScore REAL,
-    ProfitPotential REAL
-)
-""")
-conn.close()
+# List of candidate product ideas to monitor (editable)
+PRODUCT_KEYWORDS = [
+    "wireless earbuds", "air fryer", "neck massager", "led strip lights", 
+    "portable blender", "car vacuum", "pet grooming brush", "smartwatch", 
+    "projector", "mini printer", "heated blanket", "aroma diffuser"
+]
 
-# ------------------------
-# Seed sample data if empty
-# ------------------------
-def seed_sample_trends():
-    conn = sqlite3.connect(DB_FILE)
-    times = [datetime.now() - timedelta(hours=i) for i in range(5, 0, -1)]
-    rows = []
-    for t in times:
-        for p in ALI_PRODUCTS:
-            rows.append({
-                "Time": t.strftime("%Y-%m-%d %H:%M:%S"),
-                "Product": p,
-                "TrendScore": random.randint(20, 80),
-                "ProfitPotential": random.randint(20, 80)
-            })
-    df_seed = pd.DataFrame(rows)
-    df_seed.to_sql("trends", conn, if_exists="append", index=False)
-    conn.close()
-
-# Run seeding if empty
-conn = sqlite3.connect(DB_FILE)
-cur = conn.cursor()
-cur.execute("SELECT COUNT(*) FROM trends")
-if cur.fetchone()[0] == 0:
-    print("Seeding database with sample trends...")
-    seed_sample_trends()
-conn.close()
-
-# ------------------------
-# Helper functions
-# ------------------------
-def compute_combined_trends(markup_multiplier=2.5, shipping_cost=3.0):
+# Function to fetch real Google Trends data
+def fetch_trend_data():
     data = []
-    for p in ALI_PRODUCTS:
-        price = random.randint(10,50)
-        profit_margin = random.randint(20,70)
-        trend_score = random.randint(10,80)
-        profit_potential = round(profit_margin * price / 100,2)
-        data.append({
-            "Product": p,
-            "GoogleScore": random.randint(10,50),
-            "AliScore": random.randint(10,50),
-            "TikTokScore": random.randint(10,50),
-            "Price": price,
-            "ProfitMargin": profit_margin,
-            "TrendScore": trend_score,
-            "ProfitPotential": profit_potential,
-            "ImageURL": None,
-            "AliURL": f"https://www.aliexpress.com/wholesale?SearchText={quote_plus(p)}"
-        })
+    now = datetime.datetime.now()
+
+    for product in PRODUCT_KEYWORDS:
+        try:
+            pytrends.build_payload([product], cat=0, timeframe='now 7-d', geo='', gprop='')
+            df = pytrends.interest_over_time()
+            if not df.empty:
+                avg_interest = int(df[product].mean())
+                last_interest = int(df[product].iloc[-1])
+                trend_change = last_interest - avg_interest
+                data.append({
+                    "Product": product,
+                    "Avg Interest": avg_interest,
+                    "Current Interest": last_interest,
+                    "Change": trend_change,
+                    "Profit Potential": random.randint(40, 95),
+                    "Source": f"https://www.google.com/search?q={product.replace(' ', '+')}"
+                })
+        except Exception as e:
+            print(f"Error fetching {product}: {e}")
+
     return pd.DataFrame(data)
 
-def get_ad_creatives(product_name):
-    return [{"image":"https://via.placeholder.com/120x80.png?text=Ad", "source":"https://example.com", "caption":"Sample Ad"}]
+# Fetch initial data
+df = fetch_trend_data()
 
-def save_trends_to_db(df):
-    conn = sqlite3.connect(DB_FILE)
-    df_to_save = df[["Product", "TrendScore", "ProfitPotential"]].copy()
-    df_to_save["Time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    df_to_save.to_sql("trends", conn, if_exists="append", index=False)
-    conn.close()
-
-# ------------------------
-# Initialize Dash
-# ------------------------
+# Create Dash app
 app = dash.Dash(__name__)
-app.title = "Dropship Trend Dashboard"
+app.title = "Dropship Trend Tracker"
 
-# ------------------------
 # Layout
-# ------------------------
-app.layout = html.Div([
-    html.H1("📊 Dropship Trend Dashboard", style={'textAlign':'center','color':'#00ffcc'}),
-    
-    html.Div(id="top-row", style={'margin':'20px 0'}),
-    
-    html.Div([
-        html.Label("Markup Multiplier:"),
-        dcc.Input(id="input-markup", type="number", value=2.5, step=0.1, style={"maxWidth":"80px"}),
-        html.Label("Shipping Cost:"),
-        dcc.Input(id="input-ship", type="number", value=3.0, step=0.5, style={"maxWidth":"80px"}),
-        html.Button("Export Swipes", id="export-swipes")
-    ], style={'textAlign':'center','margin':'10px','overflowX':'hidden'}),
+app.layout = html.Div(style={'backgroundColor': '#0a0f24', 'color': '#ffffff', 'padding': '20px'}, children=[
+    html.H1("🚀 Dropship Trend Tracker", style={'textAlign': 'center', 'color': '#00FFFF'}),
 
-    # Table wrapper (scrollable horizontally)
-    html.Div(id="table-container", style={'overflowX': 'auto', 'width': '100%', 'paddingBottom':'10px'}),
-    
-    html.Div([
-        dcc.Graph(id="profit-bar-chart"),
-        dcc.Graph(id="trend-line-chart")
-    ], style={'display':'flex','flexDirection':'column', 'gap':'20px'}),
+    html.Div(id='update-time', style={'textAlign': 'center', 'marginBottom': '10px'}),
 
-    dcc.Interval(id="interval", interval=5*60*1000)  # refresh every 5 min
-], style={'backgroundColor':'#111','color':'#fff','fontFamily':'sans-serif','padding':'10px','overflowX':'hidden','maxWidth':'100vw'})
+    dcc.Graph(id='trend-chart'),
+    dcc.Graph(id='profit-chart'),
 
-# ------------------------
-# Callback
-# ------------------------
+    dash_table.DataTable(
+        id='trend-table',
+        columns=[
+            {"name": "Product", "id": "Product", "presentation": "markdown"},
+            {"name": "Avg Interest", "id": "Avg Interest"},
+            {"name": "Current Interest", "id": "Current Interest"},
+            {"name": "Change", "id": "Change"},
+            {"name": "Profit Potential", "id": "Profit Potential"}
+        ],
+        style_table={'overflowX': 'auto'},
+        style_cell={'textAlign': 'center', 'backgroundColor': '#111111', 'color': '#FFFFFF'},
+        style_header={'backgroundColor': '#1a1f3b', 'fontWeight': 'bold', 'color': '#00FFFF'},
+        markdown_options={"html": True}
+    ),
+
+    dcc.Interval(
+        id='interval-component',
+        interval=3*60*60*1000,  # every 3 hours
+        n_intervals=0
+    )
+])
+
+# Callbacks
 @app.callback(
-    [Output("table-container","children"),
-     Output("profit-bar-chart","figure"),
-     Output("trend-line-chart","figure"),
-     Output("top-row","children")],
-    [Input("interval","n_intervals"),
-     Input("input-markup","value"),
-     Input("input-ship","value"),
-     Input("export-swipes","n_clicks")]
+    [Output('trend-chart', 'figure'),
+     Output('profit-chart', 'figure'),
+     Output('trend-table', 'data'),
+     Output('update-time', 'children')],
+    [Input('interval-component', 'n_intervals')]
 )
-def update_dashboard(n, markup, ship, export_clicks):
-    try: markup = float(markup)
-    except: markup = 2.5
-    try: ship = float(ship)
-    except: ship = 3.0
+def update_data(n):
+    df = fetch_trend_data()
+    df['Product'] = df['Product'].apply(lambda p: f"[{p}]({f'https://www.google.com/search?q={p.replace(' ', '+')}'} )")
 
-    # --- Compute trends safely ---
-    df = compute_combined_trends(markup_multiplier=markup, shipping_cost=ship)
+    trend_fig = px.bar(df, x='Product', y='Current Interest', color='Change', title='🔥 Current Search Interest')
+    profit_fig = px.bar(df, x='Product', y='Profit Potential', title='💰 Estimated Profit Potential')
 
-    # --- Save to DB ---
-    try:
-        save_trends_to_db(df)
-    except Exception as e:
-        print("Failed to save trends:", e)
+    trend_fig.update_layout(template='plotly_dark', title_x=0.5)
+    profit_fig.update_layout(template='plotly_dark', title_x=0.5)
 
-    # --- Load historical data ---
-    try:
-        hist = pd.read_sql("SELECT * FROM trends ORDER BY Time ASC", sqlite3.connect(DB_FILE))
-    except:
-        hist = pd.DataFrame()
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return trend_fig, profit_fig, df.to_dict('records'), f"Last updated: {timestamp}"
 
-    # --- Top gainer ---
-    top_badge = html.Div("No data yet", style={'textAlign':'center'})
-    try:
-        if len(hist) > 1:
-            last_time = hist['Time'].max()
-            last = hist[hist['Time'] == last_time].set_index('Product')['TrendScore']
-            prev_time = sorted(hist['Time'].unique())[-2]
-            prev = hist[hist['Time'] == prev_time].set_index('Product')['TrendScore']
-            diffs = (last - prev).dropna()
-            if not diffs.empty:
-                gainer = diffs.idxmax()
-                top_badge = html.Div([
-                    html.Span("🏆 Top Gainer:", className='badge'),
-                    html.Span(f" {gainer} (+{diffs.max():.1f})", style={'marginLeft':'8px','fontWeight':'700'})
-                ], style={'textAlign':'center'})
-    except Exception as e:
-        print("Top gainer calc failed:", e)
-
-    # --- Build table ---
-    rows = []
-    header = html.Tr([html.Th(h) for h in ["Image","Product","Price","Margin","Trend","ProfitPotential","Ads"]])
-    for r in df.itertuples():
-        try:
-            creatives = get_ad_creatives(r.Product)
-        except:
-            creatives = []
-
-        thumbs = []
-        for c in creatives[:6]:
-            thumbs.append(html.Div([
-                html.A(html.Img(src=c['image'], style={"width":"120px","maxWidth":"100%","borderRadius":"4px"}), href=c['source'], target="_blank"),
-                html.Br(),
-                html.A("Save", href="#", target="_blank", style={'fontSize':'12px','color':'#9ad0ff'})
-            ], style={'textAlign':'center'}))
-
-        thumb_row = html.Div(
-            thumbs,
-            style={"display":"flex","overflowX":"auto","gap":"8px","paddingBottom":"4px","flexWrap":"nowrap"}
-        )
-
-        product_cell = html.Td([
-            html.A(r.Product, href=r.AliURL, target="_blank", style={'fontWeight':'700','color':'#00ffcc'}),
-            html.Div(r.ImageURL and html.Img(src=r.ImageURL, style={'width':'80px','maxWidth':'100%','borderRadius':'6px','marginTop':'6px'}) or "")
-        ])
-        rows.append(html.Tr([
-            html.Td(html.Img(src=(r.ImageURL or f"https://via.placeholder.com/80x48.png?text={quote_plus(r.Product)}"), style={'width':'80px','maxWidth':'100%','borderRadius':'6px'})),
-            product_cell,
-            html.Td(f"${r.Price:.2f}"),
-            html.Td(f"{r.ProfitMargin:.1f}%"),
-            html.Td(f"{r.TrendScore:.1f}"),
-            html.Td(f"{r.ProfitPotential:.1f}"),
-            html.Td(thumb_row)
-        ]))
-    table = html.Table([header] + rows, style={'width':'100%','borderSpacing':'10px','tableLayout':'auto','minWidth':'700px'})
-
-    # --- Profit potential bar chart ---
-    try:
-        bar_fig = px.bar(df, x="Product", y="ProfitPotential", color="ProfitPotential",
-                         title="💹 Profit Potential", color_continuous_scale=px.colors.sequential.Mint)
-        bar_fig.update_layout(template="plotly_dark", height=420, margin=dict(t=50,l=25,r=25,b=120))
-    except:
-        bar_fig = px.bar(title="💹 Profit Potential")
-
-    # --- Trend line chart ---
-    try:
-        if not hist.empty:
-            line_fig = px.line(hist, x="Time", y="Trend
+# Run the app
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8050)
